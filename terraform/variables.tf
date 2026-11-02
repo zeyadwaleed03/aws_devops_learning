@@ -33,11 +33,7 @@ variable "key_name" {
   description = "The name of the key pair to use for the EC2 instance"
 
 }
-variable "availability_zone" {
-  default     = "${region}a"
-  description = "The availability zone for the resources"
 
-}
 variable "security_group_cidr_ingress_web" {
   default     = "0.0.0.0/0"
   description = "The CIDR block for the security group"

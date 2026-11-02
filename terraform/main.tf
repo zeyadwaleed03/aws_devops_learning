@@ -32,7 +32,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "subnet1" {
   cidr_block        = var.subnet_cidr
   vpc_id            = aws_vpc.main.id
-  availability_zone = var.availability_zone
+  availability_zone = "${var.region}a"
   tags = {
     Name = "main_subnet"
   }
@@ -44,7 +44,7 @@ resource "aws_instance" "server" {
   instance_type          = var.instance_type
   subnet_id              = aws_subnet.subnet1.id
   vpc_security_group_ids = [aws_security_group.allow_tls_ssh.id]
-  availability_zone      = var.availability_zone
+  availability_zone      = "${var.region}a"
   key_name               = var.key_name
   tags = {
     Name = "server"
@@ -68,7 +68,7 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
 }
 resource "aws_vpc_security_group_ingress_rule" "https" {
   security_group_id = aws_security_group.allow_tls_ssh.id
-  cidr_ipv4         = var.security_group_cidr_ingress_ssh
+  cidr_ipv4         = var.security_group_cidr_ingress_web
   ip_protocol       = "tcp"
   to_port           = 443
   from_port         = 443
