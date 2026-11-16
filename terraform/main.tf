@@ -66,6 +66,14 @@ resource "aws_vpc_security_group_ingress_rule" "http" {
 
 
 }
+resource "aws_vpc_security_group_ingress_rule" "webserver" {
+  security_group_id = aws_security_group.allow_tls_ssh.id
+  ip_protocol       = "tcp"
+  cidr_ipv4         = var.security_group_cidr_ingress_web
+  to_port           = 8080
+  from_port         = 8080
+
+}
 resource "aws_vpc_security_group_ingress_rule" "https" {
   security_group_id = aws_security_group.allow_tls_ssh.id
   cidr_ipv4         = var.security_group_cidr_ingress_web
