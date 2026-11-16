@@ -1,0 +1,121 @@
+-
+  name: "Install docker on EC2 instance"
+  hosts: server
+  become: true
+  tasks:
+    - name: Update apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    - name: Install docker
+      apt:
+        name: 
+          - docker.io
+          - docker-compose-v2
+          
+        state: present
+    - name: Add user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+    - name: Enable and start docker service
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+    
+- hosts: server
+  vars:
+    ansible_user: ubuntu
+    app_src: "{{ playbook_dir }}/../app"
+    app_dest: "/home/ubuntu/app"
+    DUCKDNS_TOKEN: "{{ lookup('env', 'DUCKDNS_TOKEN') }}"
+    DUCKDNS_DOMAIN: "{{ lookup('env', 'DUCKDNS_DOMAIN') | default('zeyadwaleed03.duckdns.org', true) }}"
+    LETSENCRYPT_EMAIL: "{{ lookup('env', 'LETSENCRYPT_EMAIL') }}"
+  
+  tasks:
+    - name: Install Certbot packages
+      become: true
+      apt:
+        name:
+          - certbot
+        state: present
+        update_cache: yes
+
+    - name: Create Certbot directories
+      become: true
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      loop:
+        - /opt/certbot/www
+        - /opt/certbot/conf
+        - /opt/certbot/work
+        - /opt/certbot/logs
+
+    - name: "Copy application files to EC2 instance"
+      copy:
+        src: "{{ app_src }}/"
+        dest: "{{ app_dest }}/"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy certificate automation scripts
+      become: true
+      copy:
+        src: "{{ playbook_dir }}/../scripts/"
+        dest: "{{ app_dest }}/scripts/"
+        owner: ubuntu
+        group: ubuntu
+        mode: preserve
+
+    - name: Validate DuckDNS and Let's Encrypt configuration
+      assert:
+        that:
+          - DUCKDNS_TOKEN | length > 0
+          - DUCKDNS_TOKEN != 'YOUR_DUCKDNS_TOKEN_HERE'
+          - DUCKDNS_DOMAIN | length > 0
+          - LETSENCRYPT_EMAIL | length > 0
+        fail_msg: >-
+          Missing deployment secrets. Set DUCKDNS_TOKEN and LETSENCRYPT_EMAIL in the
+          shell environment, or pass -e DUCKDNS_TOKEN=... -e LETSENCRYPT_EMAIL=...
+
+    - name: Create the DuckDNS environment file on the server
+      become: true
+      template:
+        src: "{{ playbook_dir }}/templates/.env.j2"
+        dest: "{{ app_dest }}/scripts/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+      no_log: true
+
+    - name: Build application image
+      become: true
+      command:
+        chdir: "{{ app_dest }}"
+        cmd: docker compose build app1
+    - name: Start application services
+      become: true
+      command:
+        chdir: "{{ app_dest }}"
+        cmd: docker compose up -d --no-build
+
+    - name: Update DuckDNS and issue the certificate
+      become: true
+      command:
+        chdir: "{{ app_dest }}"
+        cmd: "{{ app_dest }}/scripts/cert.sh"
+
+    - name: Install automatic certificate renewal schedule
+      become: true
+      cron:
+        name: Renew Let's Encrypt certificates
+        minute: "0"
+        hour: "3"
+        job: "certbot renew --config-dir /opt/certbot/conf --work-dir /opt/certbot/work --logs-dir /opt/certbot/logs"
