@@ -19,7 +19,7 @@ if grep -qE "^[[:space:]]*${VARIABLE}[[:space:]]*=" "$TFVARS_FILE"; then
 
     if [[ "$CURRENT_CIDR" == "$MY_CIDR" ]]; then
         echo "SSH ingress IP is already up to date: $MY_CIDR"
-        
+
     else
         sed -i -E \
             "s|^[[:space:]]*${VARIABLE}[[:space:]]*=.*|${VARIABLE} = \"${MY_CIDR}\"|" \
