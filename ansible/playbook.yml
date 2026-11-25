@@ -9,14 +9,14 @@
         cache_valid_time: 3600
     - name: Install docker
       apt:
-        name: 
+        name:
           - docker.io
           - docker-compose-v2
-          
+
         state: present
     - name: Add user to docker group
       user:
-        name: ubuntu
+        name: "{{ ansible_user }}"
         groups: docker
         append: yes
     - name: Enable and start docker service
@@ -24,16 +24,15 @@
         name: docker
         enabled: yes
         state: started
-    
+
 - hosts: server
   vars:
-    ansible_user: ubuntu
     app_src: "{{ playbook_dir }}/../app"
-    app_dest: "/home/ubuntu/app"
+    app_dest: "/home/{{ ansible_user }}/app"
     DUCKDNS_TOKEN: "{{ lookup('env', 'DUCKDNS_TOKEN') }}"
     DUCKDNS_DOMAIN: "{{ lookup('env', 'DUCKDNS_DOMAIN') | default('zeyadwaleed03.duckdns.org', true) }}"
     LETSENCRYPT_EMAIL: "{{ lookup('env', 'LETSENCRYPT_EMAIL') }}"
-  
+
   tasks:
     - name: Install Certbot packages
       become: true
@@ -48,8 +47,8 @@
       file:
         path: "{{ item }}"
         state: directory
-        owner: ubuntu
-        group: ubuntu
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: '0755'
       loop:
         - /opt/certbot/www
@@ -61,8 +60,8 @@
       copy:
         src: "{{ app_src }}/"
         dest: "{{ app_dest }}/"
-        owner: ubuntu
-        group: ubuntu
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: '0755'
 
     - name: Copy certificate automation scripts
@@ -70,8 +69,8 @@
       copy:
         src: "{{ playbook_dir }}/../scripts/"
         dest: "{{ app_dest }}/scripts/"
-        owner: ubuntu
-        group: ubuntu
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: preserve
 
     - name: Validate DuckDNS and Let's Encrypt configuration
@@ -88,10 +87,10 @@
     - name: Create the DuckDNS environment file on the server
       become: true
       template:
-        src: "{{ playbook_dir }}/templates/.env.j2"
+        src: "{{ playbook_dir }}/.env.j2"
         dest: "{{ app_dest }}/scripts/.env"
-        owner: ubuntu
-        group: ubuntu
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
         mode: '0600'
       no_log: true
 

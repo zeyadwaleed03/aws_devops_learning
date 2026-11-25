@@ -29,6 +29,16 @@ if [[ -z "${DUCKDNS_DOMAIN:-}" || -z "${LETSENCRYPT_EMAIL:-}" || "$LETSENCRYPT_E
     exit 1
 fi
 
+if [[ -z "${ANSIBLE_USER:-}" ]]; then
+    echo "Set ANSIBLE_USER in scripts/.env before deploying." >&2
+    exit 1
+fi
+
+if [[ -z "${ANSIBLE_SSH_PRIVATE_KEY_FILE:-}" || "$ANSIBLE_SSH_PRIVATE_KEY_FILE" == "/path/to/your/ec2-key.pem" ]]; then
+    echo "Set ANSIBLE_SSH_PRIVATE_KEY_FILE in scripts/.env before deploying." >&2
+    exit 1
+fi
+
 # Retrieve Elastic IP
 PUBLIC_IP=$(terraform -chdir="$TERRAFORM_DIR" output -raw server_public_ip)
 
@@ -40,7 +50,14 @@ fi
 echo "EC2 Public IP: $PUBLIC_IP"
 
 # Generate inventory
-sed "s|__SERVER_PUBLIC_IP__|$PUBLIC_IP|g" \
+escaped_private_key_file=${ANSIBLE_SSH_PRIVATE_KEY_FILE//\\/\\\\}
+escaped_private_key_file=${escaped_private_key_file//&/\\&}
+escaped_private_key_file=${escaped_private_key_file//|/\\|}
+
+sed \
+    -e "s|__SERVER_PUBLIC_IP__|$PUBLIC_IP|g" \
+    -e "s|__ANSIBLE_USER__|$ANSIBLE_USER|g" \
+    -e "s|__ANSIBLE_SSH_PRIVATE_KEY_FILE__|$escaped_private_key_file|g" \
     "$ANSIBLE_DIR/inventory.ini.tpl" \
     > "$ANSIBLE_DIR/inventory.ini"
 
