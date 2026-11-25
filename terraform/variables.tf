@@ -45,6 +45,6 @@ variable "security_group_cidr_egress" {
 
 }
 variable "security_group_cidr_ingress_ssh" {
-  default     = "0.0.0.0/0"
+
   description = "The CIDR block for the security group SSH rule"
 }
