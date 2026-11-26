@@ -2,7 +2,7 @@
 
 ## Remote state setup
 
-The dispatch-only deployment workflow checks for `TF_STATE_BUCKET` before deployment. If it is missing, a bootstrap job creates it with the separate `terraform/bootstrap` configuration, enables versioning, encryption and public-access blocking, and stores the bootstrap state under `bootstrap/terraform.tfstate`. The deploy job is intentionally skipped on that first run.
+The dispatch-only deployment workflow checks for `TF_STATE_BUCKET` before deployment. If it exists, the workflow skips bucket creation. If it is missing, a bootstrap job creates it with the separate `terraform/bootstrap` configuration, enables versioning, encryption and public-access blocking, and migrates the bootstrap state to `bootstrap/terraform.tfstate`. The deploy job is intentionally skipped on that first run.
 
 After the bucket has been created, migrate the existing application state from the repository root. Replace the bucket name and region with the values configured in GitHub:
 
@@ -15,14 +15,14 @@ terraform -chdir=terraform init -migrate-state \
   -backend-config='use_lockfile=true'
 ```
 
-The bucket's bootstrap configuration has a `prevent_destroy` lifecycle rule to help protect it from accidental deletion. When the workflow finds a bucket without bootstrap state, it imports the existing bucket resources before enforcing those protections.
+The bucket's bootstrap configuration has a `prevent_destroy` lifecycle rule to help protect it from accidental deletion. The AWS role used by the bootstrap job needs permission to check the bucket and create/configure it when absent.
 
 The `Deploy Development` GitHub Actions workflow expects these values in the `development` GitHub environment:
 
 - Variables: `AWS_ROLE_ARN`, `AWS_REGION`, `TF_STATE_BUCKET`, `ANSIBLE_USER` (optional; defaults to `ubuntu`), `DUCKDNS_DOMAIN`, and `LETSENCRYPT_EMAIL`.
 - Secrets: `ADMIN_SSH_IP` (your public IPv4 address, with or without `/32`), `EC2_SSH_PRIVATE_KEY` (the EC2 key pair's private key), and `DUCKDNS_TOKEN`.
 
-Configure the AWS role to trust GitHub Actions through OIDC and grant only the needed infrastructure permissions plus access to this bucket and the state object's `.tflock` lock file. The workflow temporarily adds the runner's public IPv4 as a separate SSH rule, runs the playbook (which also runs the certificate script), then removes the runner rule even if deployment fails. The `confirm_deployment` dispatch input must be checked before apply. A state check prevents applying unless the migrated remote state already contains `aws_instance.server`.
+Configure the AWS role to trust GitHub Actions through OIDC and grant only the needed infrastructure permissions plus access to this bucket and the state object's `.tflock` lock file. The workflow temporarily adds the runner's public IPv4 as a separate SSH rule, runs the playbook, runs the certificate script only after the playbook succeeds, then removes the runner rule even if deployment fails. A state check prevents applying unless the migrated remote state already contains `aws_instance.server`.
 
 The workflow applies infrastructure when manually dispatched and confirmed. Migrate the existing local state before its first run to avoid attempting to recreate existing infrastructure.
 
