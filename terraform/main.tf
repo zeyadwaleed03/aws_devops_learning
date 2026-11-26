@@ -1,7 +1,5 @@
 provider "aws" {
-  region  = var.region
-  profile = var.profile
-
+  region = var.region
 }
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -82,8 +80,15 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
   to_port           = 22
   from_port         = 22
   cidr_ipv4         = var.security_group_cidr_ingress_ssh
+}
 
-
+resource "aws_vpc_security_group_ingress_rule" "ssh_runner" {
+  count             = var.security_group_cidr_ingress_ssh_runner == null ? 0 : 1
+  security_group_id = aws_security_group.allow_tls_ssh.id
+  ip_protocol       = "tcp"
+  to_port           = 22
+  from_port         = 22
+  cidr_ipv4         = var.security_group_cidr_ingress_ssh_runner
 }
 resource "aws_vpc_security_group_egress_rule" "allow_all_traffic" {
   security_group_id = aws_security_group.allow_tls_ssh.id

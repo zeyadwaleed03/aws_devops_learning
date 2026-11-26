@@ -3,11 +3,6 @@ variable "region" {
   description = "The AWS region to create resources in"
 
 }
-variable "profile" {
-  default     = "terraform-local"
-  description = "The AWS profile to use for authentication"
-
-}
 variable "ami_owner" {
   default     = "099720109477"
   description = "The owner ID for the Ubuntu AMI"
@@ -45,6 +40,26 @@ variable "security_group_cidr_egress" {
 
 }
 variable "security_group_cidr_ingress_ssh" {
-
+  type        = string
   description = "The CIDR block for the security group SSH rule"
+
+  validation {
+    condition     = can(cidrnetmask(var.security_group_cidr_ingress_ssh)) && endswith(var.security_group_cidr_ingress_ssh, "/32")
+    error_message = "SSH ingress must be a single IPv4 address with a /32 mask."
+  }
+}
+
+variable "security_group_cidr_ingress_ssh_runner" {
+  type        = string
+  description = "Temporary GitHub Actions runner CIDR for SSH access"
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.security_group_cidr_ingress_ssh_runner == null ? true : (
+      can(cidrnetmask(var.security_group_cidr_ingress_ssh_runner)) &&
+      endswith(var.security_group_cidr_ingress_ssh_runner, "/32")
+    )
+    error_message = "Runner SSH ingress must be a single IPv4 address with a /32 mask."
+  }
 }
