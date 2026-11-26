@@ -1,0 +1,149 @@
+name: Deploy Development
+
+on:
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-development
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Apply Terraform and deploy
+    runs-on: ubuntu-latest
+
+    environment: development
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      ADMIN_SSH_IP: ${{ secrets.ADMIN_SSH_IP }}
+      TF_VAR_region: ${{ vars.AWS_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.0"
+
+      - name: Initialize Terraform
+        run: |
+          test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET is required" >&2; exit 1; }
+          terraform init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=development/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: Verify remote state was migrated
+        run: |
+          terraform state list | grep -Fxq 'aws_instance.server' || {
+            echo "Remote state does not contain aws_instance.server. Migrate the existing local state before deployment." >&2
+            exit 1
+          }
+
+      - name: Remove any stale runner SSH rule
+        working-directory: .
+        run: |
+          ./scripts/insert_ip.sh --remove-runner
+          terraform -chdir=terraform plan -input=false \
+            -target=aws_vpc_security_group_ingress_rule.ssh_runner \
+            -out=cleanup.tfplan
+          terraform -chdir=terraform apply -input=false -auto-approve cleanup.tfplan
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ansible
+          ansible-playbook --version
+
+      - name: Validate deployment secrets and prepare SSH key
+        working-directory: .
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
+          DUCKDNS_DOMAIN: ${{ vars.DUCKDNS_DOMAIN }}
+          LETSENCRYPT_EMAIL: ${{ vars.LETSENCRYPT_EMAIL }}
+          ANSIBLE_USER: ${{ vars.ANSIBLE_USER }}
+        run: |
+          for name in ADMIN_SSH_IP EC2_SSH_PRIVATE_KEY DUCKDNS_TOKEN DUCKDNS_DOMAIN LETSENCRYPT_EMAIL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required GitHub environment secret or variable is missing: $name" >&2
+              exit 1
+            fi
+          done
+          key_file="$RUNNER_TEMP/ansible-deploy-key"
+          umask 077
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          {
+            printf 'DUCKDNS_TOKEN=%q\n' "$DUCKDNS_TOKEN"
+            printf 'DUCKDNS_DOMAIN=%q\n' "$DUCKDNS_DOMAIN"
+            printf 'LETSENCRYPT_EMAIL=%q\n' "$LETSENCRYPT_EMAIL"
+            printf 'ANSIBLE_USER=%q\n' "${ANSIBLE_USER:-ubuntu}"
+            printf 'ANSIBLE_SSH_PRIVATE_KEY_FILE=%q\n' "$key_file"
+          } > scripts/.env
+          chmod 600 scripts/.env
+
+      - name: Insert admin and runner IPs
+        id: ingress
+        working-directory: .
+        run: ./scripts/insert_ip.sh
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Validate configuration
+        run: terraform validate
+
+      - name: Create Terraform plan
+        run: terraform plan -input=false -out=deploy.tfplan
+
+      - name: Apply Terraform
+        id: apply
+        run: terraform apply -input=false -auto-approve deploy.tfplan
+
+      - name: Run Ansible deployment
+        working-directory: .
+        run: ./scripts/ansible_exec.sh
+
+      - name: Issue certificate
+        working-directory: .
+        run: ./scripts/ansible_exec.sh --cert-only
+
+      - name: Remove temporary runner SSH access
+        if: always() && steps.ingress.outcome != 'skipped'
+        working-directory: .
+        run: |
+          ./scripts/insert_ip.sh --remove-runner
+          terraform -chdir=terraform plan -input=false \
+            -target=aws_vpc_security_group_ingress_rule.ssh_runner \
+            -out=cleanup.tfplan
+          terraform -chdir=terraform apply -input=false -auto-approve cleanup.tfplan
+
+      - name: Remove ephemeral deployment files
+        if: always()
+        working-directory: .
+        run: |
+          rm -f -- scripts/.env ansible/inventory.ini "$RUNNER_TEMP/ansible-deploy-key"
+          rm -f -- terraform/terraform.tfvars terraform/deploy.tfplan terraform/cleanup.tfplan
