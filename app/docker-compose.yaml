@@ -1,20 +1,19 @@
 services:
   app1:
-    build: .
-    image: myapp:v1.0
+    image: zeyadwaleed03/myapp
     restart: unless-stopped
     environment:
       - APP_NAME=APP1
       - PORT=8081
   app2:
-    image: myapp:v1.0
+    image: zeyadwaleed03/myapp
     restart: unless-stopped
     environment:
       - APP_NAME=APP2
       - PORT=8082
 
   app3:
-    image: myapp:v1.0
+    image: zeyadwaleed03/myapp
     restart: unless-stopped
     environment:
       - APP_NAME=APP3

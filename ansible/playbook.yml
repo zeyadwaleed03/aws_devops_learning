@@ -94,11 +94,11 @@
         mode: '0600'
       no_log: true
 
-    - name: Build application image
+    - name: Pull application images
       become: true
       command:
         chdir: "{{ app_dest }}"
-        cmd: docker compose build app1
+        cmd: docker compose pull app1 app2 app3
     - name: Start application services
       become: true
       command:
