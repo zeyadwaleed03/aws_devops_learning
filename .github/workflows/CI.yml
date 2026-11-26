@@ -26,7 +26,14 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.14.0"
+      - name: Install terraform-docs
+        run: |
+            curl -sSLo terraform-docs.tar.gz \
+            https://terraform-docs.io/dl/v0.20.0/terraform-docs-v0.20.0-linux-amd64.tar.gz
 
+            tar -xzf terraform-docs.tar.gz
+            sudo mv terraform-docs /usr/local/bin/
+            terraform-docs --version
 
       - name: Install pre-commit
         run: pip install pre-commit
