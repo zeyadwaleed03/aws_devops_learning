@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  namespace: learning
+spec:
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: zeyadwaleed03/myapp
+          ports:
+            - containerPort: 8081
+          env:
+            - name: APP_NAME
+              value: backend
+            - name: PORT
+              value: "8081"
