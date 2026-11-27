@@ -4,16 +4,25 @@
 
 Run the separate, dispatch-only `Bootstrap Terraform State` workflow to create or reconcile the state bucket. It uses `terraform/bootstrap`, enables versioning, encryption and public-access blocking, and stores the bootstrap state at `bootstrap/terraform.tfstate`.
 
-After the bucket has been created, migrate the existing application state from the repository root. Replace the bucket name and region with the values configured in GitHub:
+After the bucket has been created, migrate the existing application state from a trusted local checkout that has the state file. The deployment runner cannot access ignored local state files. Check that `terraform/terraform.tfstate.backup` contains the existing resources before using it; if the active `terraform/terraform.tfstate` is empty and the backup is the valid state, preserve both files and restore the backup as the active local state:
 
 ```bash
-terraform -chdir=terraform init -migrate-state \
+cp terraform/terraform.tfstate terraform/terraform.tfstate.empty-backup
+cp terraform/terraform.tfstate.backup terraform/terraform.tfstate
+```
+
+Then migrate the state from the repository root. Replace the bucket name and region with the values configured in GitHub:
+
+```bash
+terraform -chdir=terraform init -migrate-state -force-copy \
   -backend-config='bucket=your-globally-unique-state-bucket' \
   -backend-config='key=development/terraform.tfstate' \
   -backend-config='region=us-east-1' \
   -backend-config='encrypt=true' \
   -backend-config='use_lockfile=true'
 ```
+
+Confirm the migration by running `terraform -chdir=terraform state list` and checking that it includes `aws_instance.server`. Then review `terraform -chdir=terraform plan` before running the deployment workflow. Do not commit either state file; state can contain sensitive data.
 
 The bucket's bootstrap configuration has a `prevent_destroy` lifecycle rule to help protect it from accidental deletion. The AWS role used by the bootstrap workflow needs permission to check the bucket and create/configure it when absent.
 

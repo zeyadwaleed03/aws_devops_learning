@@ -54,7 +54,7 @@ jobs:
           if [[ "$status" -eq 0 ]]; then
             echo "Application Terraform state exists."
           elif [[ "$output" == *"(404)"* ]]; then
-            echo "Application Terraform state is missing. Run Bootstrap Terraform if needed, migrate your existing local application state to s3://$TF_STATE_BUCKET/development/terraform.tfstate, then dispatch deployment again." >&2
+            echo "Application Terraform state is missing at s3://$TF_STATE_BUCKET/development/terraform.tfstate. Do not remove this check: without state Terraform may recreate existing resources. From a trusted local checkout with AWS access, restore terraform/terraform.tfstate.backup if it contains the existing resources, then run terraform init -migrate-state -force-copy with this bucket/key/region. See terraform/README.md. Dispatch deployment again after migration." >&2
             exit 1
           else
             printf 'Could not verify application state:\n%s\n' "$output" >&2
