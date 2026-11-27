@@ -79,7 +79,9 @@ jobs:
 
       - name: Initialize local bootstrap state
         if: steps.check.outputs.bootstrap_state_exists != 'true'
-        run: terraform -chdir=terraform/bootstrap init -backend=false -input=false
+        run: |
+          rm -f terraform/bootstrap/backend.tf
+          terraform -chdir=terraform/bootstrap init -backend=false -input=false
 
       - name: Create bucket when missing
         if: steps.check.outputs.bucket_exists != 'true'
@@ -107,6 +109,14 @@ jobs:
 
       - name: Initialize S3 bootstrap backend
         run: |
+          if [[ "${{ steps.check.outputs.bootstrap_state_exists }}" != "true" ]]; then
+            cat > terraform/bootstrap/backend.tf <<'EOF'
+          terraform {
+            backend "s3" {}
+          }
+          EOF
+          fi
+
           backend_args=(
             "-backend-config=bucket=$TF_STATE_BUCKET"
             "-backend-config=key=bootstrap/terraform.tfstate"
