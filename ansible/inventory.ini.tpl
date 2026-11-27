@@ -4,3 +4,4 @@ ec2-instance ansible_host=__SERVER_PUBLIC_IP__
 [server:vars]
 ansible_user=__ANSIBLE_USER__
 ansible_ssh_private_key_file=__ANSIBLE_SSH_PRIVATE_KEY_FILE__
+ansible_ssh_common_args=-o StrictHostKeyChecking=accept-new

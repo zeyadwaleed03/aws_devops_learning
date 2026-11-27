@@ -13,91 +13,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bootstrap:
-    name: Prepare Terraform state bucket
-    runs-on: ubuntu-latest
-    environment: development
-    outputs:
-      bucket_created: ${{ steps.bucket.outputs.created }}
-    env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.14.0"
-
-      - name: Check whether state bucket exists
-        id: bucket
-        run: |
-          test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET is required" >&2; exit 1; }
-          test -n "$AWS_REGION" || { echo "AWS_REGION is required" >&2; exit 1; }
-
-          set +e
-          output="$(aws s3api head-bucket --bucket "$TF_STATE_BUCKET" 2>&1)"
-          status=$?
-          set -e
-
-          if [[ "$status" -eq 0 ]]; then
-            echo "State bucket exists."
-            echo "created=false" >> "$GITHUB_OUTPUT"
-          elif [[ "$output" == *"(404)"* ]]; then
-            echo "State bucket does not exist; Terraform will create it."
-            echo "created=true" >> "$GITHUB_OUTPUT"
-          else
-            printf 'Unable to check state bucket; refusing to create or use it:\n%s\n' "$output" >&2
-            exit "$status"
-          fi
-
-      - name: Create state bucket with bootstrap Terraform
-        if: steps.bucket.outputs.created == 'true'
-        run: |
-          terraform -chdir=terraform/bootstrap init -input=false
-          terraform -chdir=terraform/bootstrap apply -input=false -auto-approve \
-            -var="region=$AWS_REGION" \
-            -var="state_bucket_name=$TF_STATE_BUCKET"
-
-      - name: Configure the bootstrap S3 backend
-        if: steps.bucket.outputs.created == 'true'
-        run: |
-          cat > terraform/bootstrap/backend.tf <<'EOF'
-          terraform {
-            backend "s3" {}
-          }
-          EOF
-
-          terraform -chdir=terraform/bootstrap init -input=false \
-            -migrate-state -force-copy \
-            "-backend-config=bucket=$TF_STATE_BUCKET" \
-            "-backend-config=key=bootstrap/terraform.tfstate" \
-            "-backend-config=region=$AWS_REGION" \
-            "-backend-config=encrypt=true" \
-            "-backend-config=use_lockfile=true"
-
-      - name: Explain first-run state migration
-        if: steps.bucket.outputs.created == 'true'
-        run: |
-          {
-            echo "## State bucket created"
-            echo "The deployment job was skipped on this run. Migrate the existing Terraform state using the instructions in terraform/README.md, then dispatch the workflow again."
-          } >> "$GITHUB_STEP_SUMMARY"
-
   deploy:
     name: Apply Terraform and deploy
     runs-on: ubuntu-latest
-    needs: bootstrap
-    if: needs.bootstrap.outputs.bucket_created != 'true'
-    environment: development
     defaults:
       run:
         shell: bash
@@ -112,13 +30,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check application state exists in S3
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET is required" >&2; exit 1; }
+          test -n "$AWS_REGION" || { echo "AWS_REGION is required" >&2; exit 1; }
+
+          set +e
+          output="$(aws s3api head-object \
+            --bucket "$TF_STATE_BUCKET" \
+            --key development/terraform.tfstate 2>&1)"
+          status=$?
+          set -e
+
+          if [[ "$status" -eq 0 ]]; then
+            echo "Application Terraform state exists."
+          elif [[ "$output" == *"(404)"* ]]; then
+            echo "Application Terraform state is missing. Run Bootstrap Terraform if needed, migrate your existing local application state to s3://$TF_STATE_BUCKET/development/terraform.tfstate, then dispatch deployment again." >&2
+            exit 1
+          else
+            printf 'Could not verify application state:\n%s\n' "$output" >&2
+            exit "$status"
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -206,8 +147,6 @@ jobs:
       - name: Run Ansible deployment
         working-directory: .
         run: ./scripts/ansible_exec.sh
-
-
 
       - name: Remove temporary runner SSH access
         if: always() && steps.ingress.outcome != 'skipped'

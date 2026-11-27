@@ -1,0 +1,137 @@
+name: Bootstrap Terraform State
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-state-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Create or reconcile state bucket
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.0"
+
+      - name: Check bucket and bootstrap state
+        id: check
+        run: |
+          test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET is required" >&2; exit 1; }
+          test -n "$AWS_REGION" || { echo "AWS_REGION is required" >&2; exit 1; }
+
+          set +e
+          bucket_output="$(aws s3api head-bucket --bucket "$TF_STATE_BUCKET" 2>&1)"
+          bucket_status=$?
+          set -e
+
+          if [[ "$bucket_status" -eq 0 ]]; then
+            echo "bucket_exists=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$bucket_output" == *"(404)"* ]]; then
+            echo "bucket_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Could not verify state bucket ownership/access:\n%s\n' "$bucket_output" >&2
+            exit "$bucket_status"
+          fi
+
+          if [[ "$bucket_status" -eq 0 ]]; then
+            set +e
+            state_output="$(aws s3api head-object \
+              --bucket "$TF_STATE_BUCKET" \
+              --key bootstrap/terraform.tfstate 2>&1)"
+            state_status=$?
+            set -e
+
+            if [[ "$state_status" -eq 0 ]]; then
+              echo "bootstrap_state_exists=true" >> "$GITHUB_OUTPUT"
+            elif [[ "$state_output" == *"(404)"* ]]; then
+              echo "bootstrap_state_exists=false" >> "$GITHUB_OUTPUT"
+            else
+              printf 'Could not check bootstrap state:\n%s\n' "$state_output" >&2
+              exit "$state_status"
+            fi
+          else
+            echo "bootstrap_state_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Initialize local bootstrap state
+        if: steps.check.outputs.bootstrap_state_exists != 'true'
+        run: terraform -chdir=terraform/bootstrap init -backend=false -input=false
+
+      - name: Create bucket when missing
+        if: steps.check.outputs.bucket_exists != 'true'
+        run: |
+          terraform -chdir=terraform/bootstrap apply -input=false -auto-approve \
+            -var="region=$AWS_REGION" \
+            -var="state_bucket_name=$TF_STATE_BUCKET"
+
+      - name: Import existing bucket into bootstrap state
+        if: steps.check.outputs.bucket_exists == 'true' && steps.check.outputs.bootstrap_state_exists != 'true'
+        run: |
+          resources=(
+            aws_s3_bucket.terraform_state
+            aws_s3_bucket_public_access_block.terraform_state
+            aws_s3_bucket_server_side_encryption_configuration.terraform_state
+            aws_s3_bucket_versioning.terraform_state
+          )
+
+          for resource in "${resources[@]}"; do
+            terraform -chdir=terraform/bootstrap import -input=false \
+              -var="region=$AWS_REGION" \
+              -var="state_bucket_name=$TF_STATE_BUCKET" \
+              "$resource" "$TF_STATE_BUCKET"
+          done
+
+      - name: Initialize S3 bootstrap backend
+        run: |
+          backend_args=(
+            "-backend-config=bucket=$TF_STATE_BUCKET"
+            "-backend-config=key=bootstrap/terraform.tfstate"
+            "-backend-config=region=$AWS_REGION"
+            "-backend-config=encrypt=true"
+            "-backend-config=use_lockfile=true"
+          )
+
+          if [[ "${{ steps.check.outputs.bootstrap_state_exists }}" == "true" ]]; then
+            terraform -chdir=terraform/bootstrap init -input=false "${backend_args[@]}"
+          else
+            terraform -chdir=terraform/bootstrap init -input=false \
+              -migrate-state -force-copy "${backend_args[@]}"
+          fi
+
+      - name: Enforce bucket protections
+        run: |
+          terraform -chdir=terraform/bootstrap apply -input=false -auto-approve \
+            -var="region=$AWS_REGION" \
+            -var="state_bucket_name=$TF_STATE_BUCKET"
+
+      - name: Summarize bootstrap
+        run: |
+          {
+            echo "## Terraform state bucket is ready"
+            echo "Bootstrap state is stored at \`s3://$TF_STATE_BUCKET/bootstrap/terraform.tfstate\`."
+            echo "Before deploying, migrate the existing application Terraform state to \`s3://$TF_STATE_BUCKET/development/terraform.tfstate\`."
+          } >> "$GITHUB_STEP_SUMMARY"

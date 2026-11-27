@@ -7,6 +7,10 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERRAFORM_DIR="$PROJECT_DIR/terraform"
 ANSIBLE_DIR="$PROJECT_DIR/ansible"
 ENV_FILE="$PROJECT_DIR/scripts/.env"
+if [[ $# -gt 0 ]]; then
+    echo "Usage: $0" >&2
+    exit 2
+fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "Missing $ENV_FILE. Copy scripts/.env.example to scripts/.env and configure it." >&2
@@ -63,7 +67,6 @@ sed \
 
 echo "Inventory generated successfully"
 
-# Execute playbook
 ansible-playbook \
-    -i "$ANSIBLE_DIR/inventory.ini" \
-    "$ANSIBLE_DIR/playbook.yml"
+   -i "$ANSIBLE_DIR/inventory.ini" \
+   "$ANSIBLE_DIR/playbook.yml"
