@@ -90,12 +90,18 @@ jobs:
             -backend-config="use_lockfile=true"
 
       - name: Verify existing remote state tracks the EC2 instance
-        if: steps.application_state.outputs.exists == 'true'
+        env:
+          CREATE_INFRASTRUCTURE: ${{ inputs.create_infrastructure }}
         run: |
-          terraform state list | grep -Fxq 'aws_instance.server' || {
-            echo "Remote state does not contain aws_instance.server. Migrate the existing local state before deployment." >&2
+          state_list="$(terraform state list)"
+          if grep -Fxq 'aws_instance.server' <<< "$state_list"; then
+            echo "Remote state tracks aws_instance.server."
+          elif [[ -z "$state_list" && "$CREATE_INFRASTRUCTURE" == "true" ]]; then
+            echo "Remote state is empty and first-time infrastructure creation was explicitly confirmed."
+          else
+            echo "Remote state is non-empty or first-time creation was not confirmed, but it does not track aws_instance.server. Migrate the existing local state before deployment. Only check create_infrastructure for a genuinely new environment with no existing resources." >&2
             exit 1
-          }
+          fi
 
       - name: Remove any stale runner SSH rule
         if: steps.application_state.outputs.exists == 'true'
