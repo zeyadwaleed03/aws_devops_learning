@@ -89,22 +89,38 @@ jobs:
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
 
-      - name: Verify existing remote state tracks the EC2 instance
+      - name: Verify remote state or confirm first creation
+        id: state_guard
         env:
           CREATE_INFRASTRUCTURE: ${{ inputs.create_infrastructure }}
         run: |
-          state_list="$(terraform state list)"
-          if grep -Fxq 'aws_instance.server' <<< "$state_list"; then
-            echo "Remote state tracks aws_instance.server."
-          elif [[ -z "$state_list" && "$CREATE_INFRASTRUCTURE" == "true" ]]; then
-            echo "Remote state is empty and first-time infrastructure creation was explicitly confirmed."
+          if [[ "${{ steps.application_state.outputs.exists }}" != "true" ]]; then
+            if [[ "$CREATE_INFRASTRUCTURE" != "true" ]]; then
+              echo "No application state exists. Check create_infrastructure only for a genuinely new environment with no existing resources." >&2
+              exit 1
+            fi
+            echo "No application state exists; first-time infrastructure creation was explicitly confirmed."
+            echo "tracks_instance=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Remote state is non-empty or first-time creation was not confirmed, but it does not track aws_instance.server. Migrate the existing local state before deployment. Only check create_infrastructure for a genuinely new environment with no existing resources." >&2
-            exit 1
+            set +e
+            state_list="$(terraform state list 2>&1)"
+            status=$?
+            set -e
+
+            if [[ "$status" -eq 0 ]] && grep -Fxq 'aws_instance.server' <<< "$state_list"; then
+              echo "Remote state tracks aws_instance.server."
+              echo "tracks_instance=true" >> "$GITHUB_OUTPUT"
+            elif [[ "$status" -ne 0 && "$state_list" == *"No state file was found"* && "$CREATE_INFRASTRUCTURE" == "true" ]]; then
+              echo "The S3 object exists but Terraform has no state file; first-time infrastructure creation was explicitly confirmed."
+              echo "tracks_instance=false" >> "$GITHUB_OUTPUT"
+            else
+              printf 'Remote state is not safe for deployment. Migrate the existing local state containing aws_instance.server, or confirm creation only for a genuinely new environment.\nTerraform state list output:\n%s\n' "$state_list" >&2
+              exit 1
+            fi
           fi
 
       - name: Remove any stale runner SSH rule
-        if: steps.application_state.outputs.exists == 'true'
+        if: steps.state_guard.outputs.tracks_instance == 'true'
         working-directory: .
         run: |
           ./scripts/insert_ip.sh --remove-runner
