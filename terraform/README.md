@@ -26,7 +26,7 @@ Confirm the migration by running `terraform -chdir=terraform state list` and che
 
 The bucket's bootstrap configuration has a `prevent_destroy` lifecycle rule to help protect it from accidental deletion. The AWS role used by the bootstrap workflow needs permission to check the bucket and create/configure it when absent.
 
-The dispatch-only `Deploy Development` workflow checks that the application state object exists at `development/terraform.tfstate` before initializing Terraform. If it is missing, the workflow stops; migrate the existing local state first. It also checks that the state contains the existing EC2 instance before applying.
+The dispatch-only `Deploy Development` workflow checks for the application state object at `development/terraform.tfstate` before initializing Terraform. If state exists, the workflow verifies it tracks `aws_instance.server` before applying. If state is missing, the workflow stops by default. For a genuinely new environment with no existing infrastructure, dispatch it again with **`create_infrastructure` checked**; Terraform will plan and create the resources, then write the initial state to S3 during apply. Do not select this option for existing infrastructure with missing state—migrate its state first to avoid recreating resources.
 
 Both workflows read repository-level variables and secrets from **Settings → Secrets and variables → Actions**:
 

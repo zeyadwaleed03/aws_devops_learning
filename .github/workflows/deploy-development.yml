@@ -2,6 +2,12 @@ name: Deploy Development
 
 on:
   workflow_dispatch:
+    inputs:
+      create_infrastructure:
+        description: Allow creating infrastructure only when application state is absent
+        type: boolean
+        required: true
+        default: false
 
 
 permissions:
@@ -36,10 +42,12 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Check application state exists in S3
+      - name: Check application state in S3
+        id: application_state
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           AWS_REGION: ${{ vars.AWS_REGION }}
+          CREATE_INFRASTRUCTURE: ${{ inputs.create_infrastructure }}
         run: |
           test -n "$TF_STATE_BUCKET" || { echo "TF_STATE_BUCKET is required" >&2; exit 1; }
           test -n "$AWS_REGION" || { echo "AWS_REGION is required" >&2; exit 1; }
@@ -53,9 +61,14 @@ jobs:
 
           if [[ "$status" -eq 0 ]]; then
             echo "Application Terraform state exists."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           elif [[ "$output" == *"(404)"* ]]; then
-            echo "Application Terraform state is missing at s3://$TF_STATE_BUCKET/development/terraform.tfstate. Do not remove this check: without state Terraform may recreate existing resources. From a trusted local checkout with AWS access, restore terraform/terraform.tfstate.backup if it contains the existing resources, then run terraform init -migrate-state -force-copy with this bucket/key/region. See terraform/README.md. Dispatch deployment again after migration." >&2
-            exit 1
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            if [[ "$CREATE_INFRASTRUCTURE" != "true" ]]; then
+              echo "Application state is absent at s3://$TF_STATE_BUCKET/development/terraform.tfstate. For an existing deployment, migrate its local state first. For a genuinely new environment with no existing resources, re-run this workflow with create_infrastructure checked." >&2
+              exit 1
+            fi
+            echo "No application state found; explicit first-time infrastructure creation was confirmed."
           else
             printf 'Could not verify application state:\n%s\n' "$output" >&2
             exit "$status"
@@ -76,7 +89,8 @@ jobs:
             -backend-config="encrypt=true" \
             -backend-config="use_lockfile=true"
 
-      - name: Verify remote state was migrated
+      - name: Verify existing remote state tracks the EC2 instance
+        if: steps.application_state.outputs.exists == 'true'
         run: |
           terraform state list | grep -Fxq 'aws_instance.server' || {
             echo "Remote state does not contain aws_instance.server. Migrate the existing local state before deployment." >&2
@@ -84,6 +98,7 @@ jobs:
           }
 
       - name: Remove any stale runner SSH rule
+        if: steps.application_state.outputs.exists == 'true'
         working-directory: .
         run: |
           ./scripts/insert_ip.sh --remove-runner
