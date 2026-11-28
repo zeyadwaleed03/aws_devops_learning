@@ -61,6 +61,7 @@ fi
 
 chmod 600 "$TEMP_FILE"
 mv "$TEMP_FILE" "$TFVARS_FILE"
+terraform fmt "$TFVARS_FILE"
 
 if [[ "$REMOVE_RUNNER" == true ]]; then
     echo "Updated SSH ingress configuration to retain only the admin IP."
